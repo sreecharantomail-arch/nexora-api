@@ -9,6 +9,7 @@ const videoController_1 = require("../controllers/videoController");
 const uploadMiddleware_1 = require("../middleware/uploadMiddleware");
 const router = express_1.default.Router();
 router.get('/feed', authMiddleware_1.protect, videoController_1.getFeed);
+router.get('/feed/following', authMiddleware_1.protect, videoController_1.getFollowingFeed);
 // router.get('/:id', protect, getVideo);
 router.post('/', authMiddleware_1.protect, uploadMiddleware_1.upload.single('video'), videoController_1.uploadVideo);
 // router.delete('/:id', protect, deleteVideo);

@@ -29,7 +29,7 @@ const registerUser = async (req, res) => {
             passwordHash,
         });
         if (user) {
-            const { accessToken, refreshToken } = generateTokens(user._id);
+            const { accessToken, refreshToken } = generateTokens(user._id.toString());
             res.status(201).json({
                 success: true,
                 data: {
@@ -58,7 +58,7 @@ const loginUser = async (req, res) => {
             $or: [{ email: emailOrUsername }, { username: emailOrUsername }],
         });
         if (user && (await user.matchPassword(password))) {
-            const { accessToken, refreshToken } = generateTokens(user._id);
+            const { accessToken, refreshToken } = generateTokens(user._id.toString());
             res.json({
                 success: true,
                 data: {

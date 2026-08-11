@@ -30,7 +30,7 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
     });
 
     if (user) {
-      const { accessToken, refreshToken } = generateTokens(user._id as string);
+      const { accessToken, refreshToken } = generateTokens((user._id as unknown as string).toString());
       res.status(201).json({
         success: true,
         data: {
@@ -59,7 +59,7 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
     });
 
     if (user && (await user.matchPassword(password))) {
-      const { accessToken, refreshToken } = generateTokens(user._id as string);
+      const { accessToken, refreshToken } = generateTokens((user._id as unknown as string).toString());
       res.json({
         success: true,
         data: {

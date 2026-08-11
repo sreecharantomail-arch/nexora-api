@@ -13,6 +13,7 @@ export interface IUser extends Document {
     isVerified: boolean;
     role: 'user' | 'moderator' | 'admin';
     status: 'active' | 'suspended' | 'deleted';
+    blockedUsers: mongoose.Types.ObjectId[];
     matchPassword(enteredPassword: string): Promise<boolean>;
 }
 export declare const User: mongoose.Model<IUser, {}, {}, {}, Document<unknown, {}, IUser, {}, mongoose.DefaultSchemaOptions> & IUser & Required<{

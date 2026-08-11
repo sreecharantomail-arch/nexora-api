@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/authMiddleware';
 export declare const uploadVideo: (req: AuthRequest, res: Response) => Promise<void>;
 export declare const getFeed: (req: AuthRequest, res: Response) => Promise<void>;
+export declare const getFollowingFeed: (req: AuthRequest, res: Response) => Promise<void>;
 export declare const likeVideo: (req: AuthRequest, res: Response) => Promise<void>;
 export declare const unlikeVideo: (req: AuthRequest, res: Response) => Promise<void>;
 export declare const getComments: (req: AuthRequest, res: Response) => Promise<void>;

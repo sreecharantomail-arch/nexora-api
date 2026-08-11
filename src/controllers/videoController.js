@@ -3,13 +3,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.unsaveVideo = exports.saveVideo = exports.deleteComment = exports.addComment = exports.getComments = exports.unlikeVideo = exports.likeVideo = exports.getFeed = exports.uploadVideo = void 0;
+exports.unsaveVideo = exports.saveVideo = exports.deleteComment = exports.addComment = exports.getComments = exports.unlikeVideo = exports.likeVideo = exports.getFollowingFeed = exports.getFeed = exports.uploadVideo = void 0;
 const Video_1 = require("../models/Video");
 const cloudinary_1 = __importDefault(require("../config/cloudinary"));
 const streamifier_1 = __importDefault(require("streamifier"));
 const Like_1 = require("../models/Like");
 const Comment_1 = require("../models/Comment");
 const SavedVideo_1 = require("../models/SavedVideo");
+const Follow_1 = require("../models/Follow");
 const uploadVideo = async (req, res) => {
     try {
         const { caption, duration, width, height } = req.body;
@@ -89,7 +90,7 @@ const getFeed = async (req, res) => {
                 isSaved: userSavedVideoIds.has(v._id.toString())
             };
         });
-        const nextCursor = videos.length === limit ? videos[videos.length - 1]._id : null;
+        const nextCursor = videos.length === limit ? videos[videos.length - 1]?._id : null;
         res.json({
             success: true,
             data: {
@@ -103,6 +104,53 @@ const getFeed = async (req, res) => {
     }
 };
 exports.getFeed = getFeed;
+const getFollowingFeed = async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 10;
+        const cursor = req.query.cursor;
+        const userId = req.user._id;
+        // Get list of user IDs the current user is following
+        const following = await Follow_1.Follow.find({ followerId: userId });
+        const followingIds = following.map(f => f.followingId);
+        if (followingIds.length === 0) {
+            res.json({ success: true, data: { videos: [], nextCursor: null } });
+            return;
+        }
+        let query = { userId: { $in: followingIds }, status: 'published' };
+        if (cursor) {
+            query._id = { $lt: cursor };
+        }
+        const videos = await Video_1.Video.find(query)
+            .sort({ _id: -1 })
+            .limit(limit)
+            .populate('userId', 'username displayName profileImage');
+        const videoIds = videos.map(v => v._id);
+        const likes = await Like_1.Like.find({ userId, videoId: { $in: videoIds } });
+        const userLikedVideoIds = new Set(likes.map(l => l.videoId.toString()));
+        const saves = await SavedVideo_1.SavedVideo.find({ userId, videoId: { $in: videoIds } });
+        const userSavedVideoIds = new Set(saves.map(s => s.videoId.toString()));
+        const videosWithLikeStatus = videos.map(v => {
+            const videoObj = v.toObject();
+            return {
+                ...videoObj,
+                isLiked: userLikedVideoIds.has(v._id.toString()),
+                isSaved: userSavedVideoIds.has(v._id.toString())
+            };
+        });
+        const nextCursor = videos.length === limit ? videos[videos.length - 1]?._id : null;
+        res.json({
+            success: true,
+            data: {
+                videos: videosWithLikeStatus,
+                nextCursor
+            }
+        });
+    }
+    catch (error) {
+        res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: error.message } });
+    }
+};
+exports.getFollowingFeed = getFollowingFeed;
 const likeVideo = async (req, res) => {
     try {
         const videoId = req.params.id;

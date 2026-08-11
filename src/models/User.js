@@ -53,6 +53,7 @@ const userSchema = new mongoose_1.Schema({
     isVerified: { type: Boolean, default: false },
     role: { type: String, enum: ['user', 'moderator', 'admin'], default: 'user' },
     status: { type: String, enum: ['active', 'suspended', 'deleted'], default: 'active' },
+    blockedUsers: [{ type: mongoose_1.Schema.Types.ObjectId, ref: 'User' }],
 }, {
     timestamps: true,
 });

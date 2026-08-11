@@ -105,7 +105,7 @@ export const getFeed = async (req: AuthRequest, res: Response): Promise<void> =>
       };
     });
 
-    const nextCursor = videos.length === limit ? videos[videos.length - 1]._id : null;
+    const nextCursor = videos.length === limit ? videos[videos.length - 1]?._id : null;
 
     res.json({
       success: true,
@@ -160,7 +160,7 @@ export const getFollowingFeed = async (req: AuthRequest, res: Response): Promise
       };
     });
 
-    const nextCursor = videos.length === limit ? videos[videos.length - 1]._id : null;
+    const nextCursor = videos.length === limit ? videos[videos.length - 1]?._id : null;
 
     res.json({
       success: true,
@@ -179,10 +179,10 @@ export const likeVideo = async (req: AuthRequest, res: Response): Promise<void> 
     const videoId = req.params.id;
     const userId = req.user!._id;
 
-    const existingLike = await Like.findOne({ videoId, userId });
+    const existingLike = await Like.findOne({ videoId, userId } as any);
     
     if (!existingLike) {
-      await Like.create({ videoId, userId });
+      await Like.create({ videoId, userId } as any);
       await Video.findByIdAndUpdate(videoId, { $inc: { likesCount: 1 } });
     }
 
@@ -197,7 +197,7 @@ export const unlikeVideo = async (req: AuthRequest, res: Response): Promise<void
     const videoId = req.params.id;
     const userId = req.user!._id;
 
-    const deletedLike = await Like.findOneAndDelete({ videoId, userId });
+    const deletedLike = await Like.findOneAndDelete({ videoId, userId } as any);
     
     if (deletedLike) {
       await Video.findByIdAndUpdate(videoId, { $inc: { likesCount: -1 } });
@@ -212,7 +212,7 @@ export const unlikeVideo = async (req: AuthRequest, res: Response): Promise<void
 export const getComments = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const videoId = req.params.id;
-    const comments = await Comment.find({ videoId })
+    const comments = await Comment.find({ videoId } as any)
       .sort({ createdAt: -1 })
       .populate('userId', 'username displayName profileImage');
     res.json({ success: true, data: comments });
@@ -232,7 +232,7 @@ export const addComment = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    const comment = await Comment.create({ videoId, userId, text });
+    const comment = await Comment.create({ videoId, userId, text } as any);
     await Video.findByIdAndUpdate(videoId, { $inc: { commentsCount: 1 } });
     
     await comment.populate('userId', 'username displayName profileImage');
@@ -248,7 +248,7 @@ export const deleteComment = async (req: AuthRequest, res: Response): Promise<vo
     const commentId = req.params.id;
     const userId = req.user!._id;
 
-    const comment = await Comment.findOneAndDelete({ _id: commentId, userId });
+    const comment = await Comment.findOneAndDelete({ _id: commentId, userId } as any);
     if (comment) {
       await Video.findByIdAndUpdate(comment.videoId, { $inc: { commentsCount: -1 } });
     }
@@ -264,9 +264,9 @@ export const saveVideo = async (req: AuthRequest, res: Response): Promise<void> 
     const videoId = req.params.id;
     const userId = req.user!._id;
 
-    const existingSave = await SavedVideo.findOne({ videoId, userId });
+    const existingSave = await SavedVideo.findOne({ videoId, userId } as any);
     if (!existingSave) {
-      await SavedVideo.create({ videoId, userId });
+      await SavedVideo.create({ videoId, userId } as any);
     }
 
     res.json({ success: true, message: 'Video saved' });
@@ -280,7 +280,7 @@ export const unsaveVideo = async (req: AuthRequest, res: Response): Promise<void
     const videoId = req.params.id;
     const userId = req.user!._id;
 
-    await SavedVideo.findOneAndDelete({ videoId, userId });
+    await SavedVideo.findOneAndDelete({ videoId, userId } as any);
 
     res.json({ success: true, message: 'Video unsaved' });
   } catch (error) {

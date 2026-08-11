@@ -11,7 +11,7 @@ const protect = async (req, res, next) => {
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
         try {
             token = req.headers.authorization.split(' ')[1];
-            const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
+            const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET || '');
             const user = await User_1.User.findById(decoded.id).select('-passwordHash');
             if (!user) {
                 res.status(401).json({ success: false, error: { code: 'USER_NOT_FOUND', message: 'Not authorized, user not found' } });

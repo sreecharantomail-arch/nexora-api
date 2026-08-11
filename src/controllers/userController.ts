@@ -8,7 +8,7 @@ import { Report } from '../models/Report';
 export const getUserProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { username } = req.params;
-    const user = await User.findOne({ username }).select('-password');
+    const user = await User.findOne({ username } as any).select('-password');
     
     if (!user) {
       res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } });
@@ -20,7 +20,7 @@ export const getUserProfile = async (req: AuthRequest, res: Response): Promise<v
     
     let isFollowing = false;
     if (req.user) {
-      const follow = await Follow.findOne({ followerId: req.user._id, followingId: user._id });
+      const follow = await Follow.findOne({ followerId: req.user._id, followingId: user._id } as any);
       isFollowing = !!follow;
     }
 
@@ -41,7 +41,7 @@ export const getUserProfile = async (req: AuthRequest, res: Response): Promise<v
 export const getUserVideos = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { username } = req.params;
-    const user = await User.findOne({ username });
+    const user = await User.findOne({ username } as any);
     
     if (!user) {
       res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'User not found' } });
@@ -66,9 +66,9 @@ export const followUser = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
-    const existingFollow = await Follow.findOne({ followerId, followingId });
+    const existingFollow = await Follow.findOne({ followerId, followingId } as any);
     if (!existingFollow) {
-      await Follow.create({ followerId, followingId });
+      await Follow.create({ followerId, followingId } as any);
     }
 
     res.json({ success: true, message: 'Successfully followed user' });
@@ -82,7 +82,7 @@ export const unfollowUser = async (req: AuthRequest, res: Response): Promise<voi
     const followingId = req.params.id;
     const followerId = req.user!._id;
 
-    await Follow.findOneAndDelete({ followerId, followingId });
+    await Follow.findOneAndDelete({ followerId, followingId } as any);
 
     res.json({ success: true, message: 'Successfully unfollowed user' });
   } catch (error) {
@@ -131,7 +131,7 @@ export const blockUser = async (req: AuthRequest, res: Response): Promise<void> 
         { followerId: currentUserId, followingId: userIdToBlock },
         { followerId: userIdToBlock, followingId: currentUserId }
       ]
-    });
+    } as any);
 
     res.json({ success: true, message: 'Successfully blocked user' });
   } catch (error) {
