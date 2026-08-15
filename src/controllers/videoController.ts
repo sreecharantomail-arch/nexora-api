@@ -7,57 +7,114 @@ import { Like } from '../models/Like';
 import { Comment } from '../models/Comment';
 import { SavedVideo } from '../models/SavedVideo';
 import { Follow } from '../models/Follow';
+import { Notification } from '../models/Notification';
 
 export const uploadVideo = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { caption, duration, width, height } = req.body;
+    const { caption } = req.body;
     
-    if (!req.file) {
-      res.status(400).json({ success: false, error: { code: 'NO_FILE', message: 'No video file provided' } });
+    // For arrays in FormData, express body-parser usually gives an array if appended multiple times,
+    // or a single string if appended once. Let's normalize them to arrays.
+    const normalizeArray = (val: any) => (Array.isArray(val) ? val : val !== undefined ? [val] : []);
+    const durations = normalizeArray(req.body.duration);
+    const widths = normalizeArray(req.body.width);
+    const heights = normalizeArray(req.body.height);
+
+    const files = req.files as Express.Multer.File[];
+    
+    if (!files || files.length === 0) {
+      res.status(400).json({ success: false, error: { code: 'NO_FILE', message: 'No media files provided' } });
       return;
     }
 
-    const durationNum = Number(duration);
-    if (durationNum < 30 || durationNum > 59) {
-      res.status(400).json({ success: false, error: { code: 'INVALID_DURATION', message: 'Video must be between 30 and 59 seconds.' } });
+    // Upload all files concurrently
+    const uploadPromises = files.map((file, index) => {
+      const isImage = file.mimetype.startsWith('image/');
+      
+      return new Promise<any>((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          {
+            resource_type: isImage ? 'image' : 'video',
+            folder: 'nexora/posts',
+          },
+          (error, result) => {
+            if (error || !result) {
+              reject(error || new Error('Upload failed'));
+            } else {
+              const thumbnailUrl = isImage ? result.secure_url : result.secure_url.replace('.mp4', '.jpg');
+              resolve({
+                url: result.secure_url,
+                thumbnailUrl,
+                type: isImage ? 'image' : 'video',
+                duration: isImage ? 0 : Number(durations[index]) || 0,
+                width: Number(widths[index]) || result.width,
+                height: Number(heights[index]) || result.height,
+              });
+            }
+          }
+        );
+        streamifier.createReadStream(file.buffer).pipe(uploadStream);
+      });
+    });
+
+    const uploadedMedia = await Promise.all(uploadPromises);
+
+    // Extract hashtags from caption
+    const extractedHashtags = caption ? (caption.match(/#(\w+)/g) || []).map((t: string) => t.substring(1).toLowerCase()) : [];
+
+    // Fallbacks for legacy clients reading the first item directly
+    const firstMedia = uploadedMedia[0];
+
+    const video = await Video.create({
+      userId: req.user!._id,
+      media: uploadedMedia,
+      // Legacy fields
+      videoUrl: firstMedia.url,
+      thumbnailUrl: firstMedia.thumbnailUrl,
+      mediaType: firstMedia.type,
+      duration: firstMedia.duration,
+      width: firstMedia.width,
+      height: firstMedia.height,
+      fileSize: (files as any)?.[0]?.size || 0,
+      
+      caption: caption || '',
+      hashtags: extractedHashtags,
+      status: 'published'
+    });
+
+    res.status(201).json({ success: true, data: video });
+  } catch (error) {
+    res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
+  }
+};
+
+export const getVideo = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const video = await Video.findById(req.params.id).populate('userId', 'username displayName profileImage');
+    if (!video) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Video not found' } });
       return;
     }
 
-    const fileSize = req.file.size;
+    let isLiked = false;
+    let isSaved = false;
 
-    // Upload to Cloudinary using stream
-    const uploadStream = cloudinary.uploader.upload_stream(
-      {
-        resource_type: 'video',
-        folder: 'nexora/videos',
-      },
-      async (error, result) => {
-        if (error || !result) {
-          res.status(500).json({ success: false, error: { code: 'UPLOAD_FAILED', message: 'Failed to upload video' } });
-          return;
-        }
+    if (req.user) {
+      const like = await Like.findOne({ userId: req.user._id, videoId: video._id });
+      isLiked = !!like;
+      
+      const save = await SavedVideo.findOne({ userId: req.user._id, videoId: video._id });
+      isSaved = !!save;
+    }
 
-        // Create thumbnail URL (Cloudinary auto-generates .jpg from video)
-        const thumbnailUrl = result.secure_url.replace('.mp4', '.jpg');
-
-        const video = await Video.create({
-          userId: req.user!._id,
-          videoUrl: result.secure_url,
-          thumbnailUrl,
-          caption: caption || '',
-          duration: durationNum,
-          width: Number(width) || result.width,
-          height: Number(height) || result.height,
-          fileSize,
-          status: 'published'
-        });
-
-        res.status(201).json({ success: true, data: video });
+    res.json({
+      success: true,
+      data: {
+        ...video.toObject(),
+        isLiked,
+        isSaved
       }
-    );
-
-    streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
-
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
   }
@@ -174,6 +231,51 @@ export const getFollowingFeed = async (req: AuthRequest, res: Response): Promise
   }
 };
 
+export const getExploreFeed = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 21; // Multiple of 3 for the grid
+    const skip = parseInt(req.query.skip as string) || 0; // Pagination by offset since we sort by likes
+    
+    const videos = await Video.find({ status: 'published' })
+      .sort({ likesCount: -1, createdAt: -1 }) // most popular first
+      .skip(skip)
+      .limit(limit)
+      .populate('userId', 'username displayName profileImage');
+
+    // We only need the basic video objects for the explore grid (thumbnail, ID)
+    res.json({
+      success: true,
+      data: videos
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
+  }
+};
+
+export const getFeedByHashtag = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { hashtag } = req.params;
+    const limit = parseInt(req.query.limit as string) || 21;
+    const skip = parseInt(req.query.skip as string) || 0;
+    
+    const videos = await Video.find({ 
+      status: 'published',
+      hashtags: (hashtag as string).toLowerCase()
+    })
+      .sort({ _id: -1 }) // newest first
+      .skip(skip)
+      .limit(limit)
+      .populate('userId', 'username displayName profileImage');
+
+    res.json({
+      success: true,
+      data: videos
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
+  }
+};
+
 export const likeVideo = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const videoId = req.params.id;
@@ -183,7 +285,16 @@ export const likeVideo = async (req: AuthRequest, res: Response): Promise<void> 
     
     if (!existingLike) {
       await Like.create({ videoId, userId } as any);
-      await Video.findByIdAndUpdate(videoId, { $inc: { likesCount: 1 } });
+      const updatedVideo = await Video.findByIdAndUpdate(videoId, { $inc: { likesCount: 1 } });
+      
+      if (updatedVideo && updatedVideo.userId.toString() !== userId.toString()) {
+        await Notification.create({
+          recipientId: updatedVideo.userId,
+          senderId: userId,
+          type: 'like',
+          videoId: updatedVideo._id
+        });
+      }
     }
 
     res.json({ success: true, message: 'Video liked' });
@@ -233,7 +344,17 @@ export const addComment = async (req: AuthRequest, res: Response): Promise<void>
     }
 
     const comment = await Comment.create({ videoId, userId, text } as any);
-    await Video.findByIdAndUpdate(videoId, { $inc: { commentsCount: 1 } });
+    const updatedVideo = await Video.findByIdAndUpdate(videoId, { $inc: { commentsCount: 1 } });
+    
+    if (updatedVideo && updatedVideo.userId.toString() !== userId.toString()) {
+      await Notification.create({
+        recipientId: updatedVideo.userId,
+        senderId: userId,
+        type: 'comment',
+        videoId: updatedVideo._id,
+        commentId: comment._id
+      });
+    }
     
     await comment.populate('userId', 'username displayName profileImage');
 

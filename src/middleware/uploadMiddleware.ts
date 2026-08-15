@@ -8,11 +8,11 @@ export const upload = multer({
   limits: {
     fileSize: 100 * 1024 * 1024, // 100 MB max file size
   },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('video/')) {
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('video/') || file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      cb(new Error('Only video files are allowed'));
+      cb(new Error('Only video and image files are allowed'));
     }
   },
 });

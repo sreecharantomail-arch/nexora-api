@@ -16,6 +16,7 @@ export interface IUser extends Document {
   role: 'user' | 'moderator' | 'admin';
   status: 'active' | 'suspended' | 'deleted';
   blockedUsers: mongoose.Types.ObjectId[];
+  closeFriends: mongoose.Types.ObjectId[];
   matchPassword(enteredPassword: string): Promise<boolean>;
 }
 
@@ -35,6 +36,7 @@ const userSchema = new Schema<IUser>(
     role: { type: String, enum: ['user', 'moderator', 'admin'], default: 'user' },
     status: { type: String, enum: ['active', 'suspended', 'deleted'], default: 'active' },
     blockedUsers: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    closeFriends: [{ type: Schema.Types.ObjectId, ref: 'User' }],
   },
   {
     timestamps: true,

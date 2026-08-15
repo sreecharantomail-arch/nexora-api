@@ -95,7 +95,7 @@ export const refreshToken = async (req: Request, res: Response): Promise<void> =
   }
 };
 
-export const logoutUser = async (req: Request, res: Response): Promise<void> => {
+export const logoutUser = async (_req: Request, res: Response): Promise<void> => {
   // In a real app, you might want to blacklist the token or remove it from the database if you store them.
   res.json({ success: true, data: { message: 'Logged out successfully' } });
 };
