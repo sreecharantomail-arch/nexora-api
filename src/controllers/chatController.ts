@@ -60,8 +60,9 @@ export const getMessages = async (req: AuthRequest, res: Response): Promise<void
       return;
     }
 
-    if (!conversation.participants.includes(userId)) {
-      res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not participant' } });
+    const isParticipant = conversation.participants.some(p => p.toString() === userId.toString());
+    if (!isParticipant) {
+      res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Not a participant of this conversation' } });
       return;
     }
 

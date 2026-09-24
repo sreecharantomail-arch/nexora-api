@@ -57,4 +57,8 @@ const videoSchema = new Schema<IVideo>(
   }
 );
 
+videoSchema.index({ createdAt: -1 });
+videoSchema.index({ userId: 1, createdAt: -1 });
+videoSchema.index({ hashtags: 1 });
+
 export const Video = mongoose.model<IVideo>('Video', videoSchema);

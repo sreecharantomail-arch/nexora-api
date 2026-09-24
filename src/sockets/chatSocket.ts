@@ -32,6 +32,9 @@ export const initChatSocket = (io: Server) => {
     const user = (socket as any).user;
     console.log(`User connected to chat: ${user.username} (${socket.id})`);
 
+    // Global user room
+    socket.join(user._id.toString());
+
     // User joins a room specific to a conversation
     socket.on('join_chat', (conversationId: string) => {
       socket.join(conversationId);
@@ -47,6 +50,12 @@ export const initChatSocket = (io: Server) => {
       try {
         const { conversationId, text } = data;
         
+        // 0. Verify sender is a participant in the conversation
+        const conversationObj = await Conversation.findById(conversationId);
+        if (!conversationObj || !conversationObj.participants.some(p => p.toString() === user._id.toString())) {
+          return;
+        }
+
         // 1. Create the message
         const message = await Message.create({
           conversationId,
@@ -55,10 +64,10 @@ export const initChatSocket = (io: Server) => {
         });
 
         // 2. Update conversation's lastMessage and updatedAt
-        await Conversation.findByIdAndUpdate(conversationId, {
+        const conversation = await Conversation.findByIdAndUpdate(conversationId, {
           lastMessage: message._id,
           updatedAt: new Date()
-        });
+        }, { new: true });
 
         // 3. Populate sender info for the client
         await message.populate('senderId', 'username displayName profileImage');
@@ -66,6 +75,17 @@ export const initChatSocket = (io: Server) => {
         // 4. Emit to everyone in the room (including sender, or sender can rely on callback)
         io.to(conversationId).emit('receive_message', message);
         
+        // 5. Emit global notification to participants
+        if (conversation) {
+          conversation.participants.forEach(participantId => {
+            if (participantId.toString() !== user._id.toString()) {
+              io.to(participantId.toString()).emit('global_new_message', {
+                conversationId,
+                message
+              });
+            }
+          });
+        }
       } catch (error) {
         console.error('Error sending message via socket:', error);
       }

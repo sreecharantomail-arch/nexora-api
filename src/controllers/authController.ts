@@ -13,9 +13,22 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
   try {
     const { username, displayName, email, password } = req.body;
 
-    const userExists = await User.findOne({ $or: [{ email }, { username }] });
+    if (typeof username !== 'string' || typeof email !== 'string' || typeof password !== 'string' || typeof displayName !== 'string' ||
+        username.trim() === '' || email.trim() === '' || password.trim() === '') {
+      res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'Username, email, display name, and password are required strings' } });
+      return;
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const userExists = await User.findOne({ 
+      $or: [
+        { email: new RegExp(`^${normalizedEmail}$`, 'i') }, 
+        { username: new RegExp(`^${username.trim()}$`, 'i') }
+      ] 
+    });
     if (userExists) {
-      res.status(400).json({ success: false, error: { code: 'USER_EXISTS', message: 'User already exists' } });
+      res.status(400).json({ success: false, error: { code: 'USER_EXISTS', message: 'User with this email or username already exists' } });
       return;
     }
 
@@ -23,9 +36,9 @@ export const registerUser = async (req: Request, res: Response): Promise<void> =
     const passwordHash = await bcrypt.hash(password, salt);
 
     const user = await User.create({
-      username,
-      displayName,
-      email,
+      username: username.trim(),
+      displayName: displayName.trim(),
+      email: normalizedEmail,
       passwordHash,
     });
 
@@ -54,8 +67,18 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const { emailOrUsername, password } = req.body;
 
+    if (typeof emailOrUsername !== 'string' || typeof password !== 'string' || emailOrUsername.trim() === '' || password.trim() === '') {
+      res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'Email/username and password are required strings' } });
+      return;
+    }
+
+    const normalizedInput = emailOrUsername.trim();
+
     const user = await User.findOne({
-      $or: [{ email: emailOrUsername }, { username: emailOrUsername }],
+      $or: [
+        { email: new RegExp(`^${normalizedInput}$`, 'i') }, 
+        { username: new RegExp(`^${normalizedInput}$`, 'i') }
+      ],
     });
 
     if (user && (await user.matchPassword(password))) {

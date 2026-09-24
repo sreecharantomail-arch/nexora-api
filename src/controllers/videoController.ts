@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { Video } from '../models/Video';
+import { User } from '../models/User';
 import cloudinary from '../config/cloudinary';
 import streamifier from 'streamifier';
 import { Like } from '../models/Like';
@@ -10,6 +11,7 @@ import { Follow } from '../models/Follow';
 import { Notification } from '../models/Notification';
 
 export const uploadVideo = async (req: AuthRequest, res: Response): Promise<void> => {
+  const uploadedCloudinaryIds: string[] = [];
   try {
     const { caption } = req.body;
     
@@ -41,12 +43,24 @@ export const uploadVideo = async (req: AuthRequest, res: Response): Promise<void
             if (error || !result) {
               reject(error || new Error('Upload failed'));
             } else {
-              const thumbnailUrl = isImage ? result.secure_url : result.secure_url.replace('.mp4', '.jpg');
+              uploadedCloudinaryIds.push(result.public_id);
+              const videoDuration = isImage ? 0 : Number(durations[index]) || result.duration || 0;
+              if (!isImage) {
+                if (videoDuration > 0 && videoDuration < 5) {
+                  return reject(new Error('VIDEO_TOO_SHORT: Video duration must be at least 5 seconds'));
+                }
+                if (videoDuration >= 60) {
+                  return reject(new Error('VIDEO_TOO_LONG: Video duration must be under 60 seconds'));
+                }
+              }
+
+              const thumbnailUrl = isImage ? result.secure_url : result.secure_url.replace(/\.[^/.]+$/, '.jpg');
+
               resolve({
                 url: result.secure_url,
                 thumbnailUrl,
                 type: isImage ? 'image' : 'video',
-                duration: isImage ? 0 : Number(durations[index]) || 0,
+                duration: videoDuration,
                 width: Number(widths[index]) || result.width,
                 height: Number(heights[index]) || result.height,
               });
@@ -81,6 +95,74 @@ export const uploadVideo = async (req: AuthRequest, res: Response): Promise<void
       hashtags: extractedHashtags,
       status: 'published'
     });
+
+    await User.findByIdAndUpdate(req.user!._id, { $inc: { videoCount: 1 } });
+
+    res.status(201).json({ success: true, data: video });
+  } catch (error) {
+    for (const publicId of uploadedCloudinaryIds) {
+      try { await cloudinary.uploader.destroy(publicId); } catch (e) {}
+    }
+    res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
+  }
+};
+
+// Base64 upload — used by Expo SDK 52+ where FormData file uploads are broken
+export const uploadVideoBase64 = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { caption, duration, fileBase64, mimeType, fileName } = req.body;
+
+    if (!fileBase64) {
+      res.status(400).json({ success: false, error: { code: 'NO_FILE', message: 'No media file provided' } });
+      return;
+    }
+
+    const buffer = Buffer.from(fileBase64, 'base64');
+    const isImage = mimeType?.startsWith('image/');
+
+    // Upload to Cloudinary
+    const uploadResult: any = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: isImage ? 'image' : 'video',
+          folder: 'nexora/posts',
+        },
+        (error, result) => {
+          if (error || !result) reject(error || new Error('Upload failed'));
+          else resolve(result);
+        }
+      );
+      streamifier.createReadStream(buffer).pipe(uploadStream);
+    });
+
+    const thumbnailUrl = isImage ? uploadResult.secure_url : uploadResult.secure_url.replace('.mp4', '.jpg');
+    const mediaItem: { url: string; thumbnailUrl: string; type: 'image' | 'video'; duration: number; width: number; height: number } = {
+      url: uploadResult.secure_url,
+      thumbnailUrl,
+      type: isImage ? 'image' : 'video',
+      duration: isImage ? 0 : Number(duration) || 0,
+      width: uploadResult.width,
+      height: uploadResult.height,
+    };
+
+    const extractedHashtags = caption ? (caption.match(/#(\w+)/g) || []).map((t: string) => t.substring(1).toLowerCase()) : [];
+
+    const video = await Video.create({
+      userId: req.user!._id,
+      media: [mediaItem],
+      videoUrl: mediaItem.url,
+      thumbnailUrl: mediaItem.thumbnailUrl,
+      mediaType: mediaItem.type as any,
+      duration: mediaItem.duration,
+      width: mediaItem.width,
+      height: mediaItem.height,
+      fileSize: buffer.length,
+      caption: caption || '',
+      hashtags: extractedHashtags,
+      status: 'published'
+    });
+
+    await User.findByIdAndUpdate(req.user!._id, { $inc: { videoCount: 1 } });
 
     res.status(201).json({ success: true, data: video });
   } catch (error) {
@@ -125,9 +207,13 @@ export const getFeed = async (req: AuthRequest, res: Response): Promise<void> =>
     const limit = parseInt(req.query.limit as string) || 10;
     const cursor = req.query.cursor as string;
     
-    let query = {};
+    let query: any = { status: 'published' };
     if (cursor) {
-      query = { _id: { $lt: cursor } }; // Simple cursor pagination using ObjectId
+      query._id = { $lt: cursor }; // Simple cursor pagination using ObjectId
+    }
+
+    if (req.user && req.user.blockedUsers && req.user.blockedUsers.length > 0) {
+      query.userId = { $nin: req.user.blockedUsers };
     }
 
     const videos = await Video.find(query)
@@ -338,8 +424,8 @@ export const addComment = async (req: AuthRequest, res: Response): Promise<void>
     const userId = req.user!._id;
     const { text } = req.body;
 
-    if (!text || text.trim() === '') {
-      res.status(400).json({ success: false, error: { code: 'INVALID_COMMENT', message: 'Comment cannot be empty' } });
+    if (typeof text !== 'string' || text.trim() === '') {
+      res.status(400).json({ success: false, error: { code: 'INVALID_COMMENT', message: 'Comment must be a non-empty string' } });
       return;
     }
 
@@ -369,10 +455,25 @@ export const deleteComment = async (req: AuthRequest, res: Response): Promise<vo
     const commentId = req.params.id;
     const userId = req.user!._id;
 
-    const comment = await Comment.findOneAndDelete({ _id: commentId, userId } as any);
-    if (comment) {
-      await Video.findByIdAndUpdate(comment.videoId, { $inc: { commentsCount: -1 } });
+    const comment = await Comment.findById(commentId);
+    if (!comment) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Comment not found' } });
+      return;
     }
+
+    const video = await Video.findById(comment.videoId);
+    if (!video) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Video not found' } });
+      return;
+    }
+
+    if (comment.userId.toString() !== userId.toString() && video.userId.toString() !== userId.toString() && req.user!.role !== 'admin') {
+      res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'You are not authorized to delete this comment' } });
+      return;
+    }
+
+    await Comment.findByIdAndDelete(commentId);
+    await Video.findByIdAndUpdate(comment.videoId, { $inc: { commentsCount: -1 } });
 
     res.json({ success: true, message: 'Comment deleted' });
   } catch (error) {
@@ -404,6 +505,82 @@ export const unsaveVideo = async (req: AuthRequest, res: Response): Promise<void
     await SavedVideo.findOneAndDelete({ videoId, userId } as any);
 
     res.json({ success: true, message: 'Video unsaved' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
+  }
+};
+
+export const getSavedVideos = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!._id;
+    const saves = await SavedVideo.find({ userId }).sort({ createdAt: -1 });
+    const videoIds = saves.map(s => s.videoId);
+
+    const videos = await Video.find({ _id: { $in: videoIds }, status: 'published' })
+      .populate('userId', 'username displayName profileImage');
+
+    res.json({ success: true, data: videos });
+  } catch (error) {
+    res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
+  }
+};
+
+const getCloudinaryPublicId = (url: string) => {
+  try {
+    if (!url || typeof url !== 'string') return null;
+    const parts = url.split('/upload/');
+    if (parts.length < 2 || !parts[1]) return null;
+    const path = parts[1].replace(/^v\d+\//, ''); // remove version prefix v1234567/
+    const lastDotIndex = path.lastIndexOf('.');
+    return lastDotIndex !== -1 ? path.substring(0, lastDotIndex) : path;
+  } catch {
+    return null;
+  }
+};
+
+export const deleteVideo = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const videoId = req.params.id;
+    const userId = req.user!._id;
+
+    const video = await Video.findById(videoId);
+    if (!video) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Video not found' } });
+      return;
+    }
+
+    if (video.userId.toString() !== userId.toString() && req.user!.role !== 'admin') {
+      res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'You are not authorized to delete this video' } });
+      return;
+    }
+
+    // Delete media files from Cloudinary storage
+    const itemsToDelete: { url: string; type: string }[] = [];
+    if (Array.isArray(video.media) && video.media.length > 0) {
+      for (const m of video.media) {
+        if (m && m.url) {
+          itemsToDelete.push({ url: m.url, type: m.type });
+        }
+      }
+    } else if (video.videoUrl) {
+      itemsToDelete.push({ url: video.videoUrl, type: video.mediaType || 'video' });
+    }
+
+    for (const item of itemsToDelete) {
+      const publicId = getCloudinaryPublicId(item.url);
+      if (publicId) {
+        try {
+          await cloudinary.uploader.destroy(publicId, { resource_type: item.type === 'image' ? 'image' : 'video' });
+        } catch (cloudinaryErr) {
+          console.error('Failed to destroy Cloudinary asset:', publicId, cloudinaryErr);
+        }
+      }
+    }
+
+    await Video.findByIdAndDelete(videoId);
+    await User.findByIdAndUpdate(video.userId, { $inc: { videoCount: -1 } });
+
+    res.json({ success: true, message: 'Video deleted successfully from database and Cloudinary' });
   } catch (error) {
     res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
   }

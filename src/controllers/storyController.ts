@@ -51,6 +51,46 @@ export const uploadStory = async (req: AuthRequest, res: Response): Promise<void
   }
 };
 
+// Base64 upload — used by Expo SDK 52+ where FormData file uploads are broken
+export const uploadStoryBase64 = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { audience = 'PUBLIC', fileBase64, mimeType } = req.body;
+
+    if (!fileBase64) {
+      res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'No media file provided' } });
+      return;
+    }
+
+    const buffer = Buffer.from(fileBase64, 'base64');
+    const isVideo = mimeType?.startsWith('video/');
+    const resourceType = isVideo ? 'video' : 'image';
+
+    const mediaUrl: string = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { folder: 'nexora/stories', resource_type: resourceType },
+        (error, result) => {
+          if (error || !result) reject(error || new Error('Upload failed'));
+          else resolve(result.secure_url);
+        }
+      );
+      streamifier.createReadStream(buffer).pipe(uploadStream);
+    });
+
+    const story = await Story.create({
+      userId: req.user!._id,
+      mediaUrl,
+      mediaType: resourceType,
+      audience
+    });
+
+    await story.populate('userId', 'username displayName profileImage');
+
+    res.status(201).json({ success: true, data: [story] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
+  }
+};
+
 export const getFeedStories = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!._id;
@@ -105,6 +145,43 @@ export const getFeedStories = async (req: AuthRequest, res: Response): Promise<v
     userMap.forEach(group => groupedStories.push(group));
 
     res.json({ success: true, data: groupedStories });
+  } catch (error) {
+    res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
+  }
+};
+
+export const deleteStory = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const storyId = req.params.id;
+    const userId = req.user!._id;
+
+    const story = await Story.findById(storyId);
+    if (!story) {
+      res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Story not found' } });
+      return;
+    }
+
+    if (story.userId.toString() !== userId.toString() && req.user!.role !== 'admin') {
+      res.status(403).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'You are not authorized to delete this story' } });
+      return;
+    }
+
+    if (story.mediaUrl) {
+      try {
+        const parts = story.mediaUrl.split('/');
+        const filename = parts.pop();
+        const folder = parts.pop();
+        if (filename && folder) {
+          const publicId = `${folder}/${filename.split('.')[0]}`;
+          await cloudinary.uploader.destroy(publicId, { resource_type: story.mediaType === 'image' ? 'image' : 'video' });
+        }
+      } catch (err) {
+        console.error('Failed to delete story media from Cloudinary:', err);
+      }
+    }
+
+    await Story.findByIdAndDelete(storyId);
+    res.json({ success: true, message: 'Story deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: (error as Error).message } });
   }
